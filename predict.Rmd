@@ -1,0 +1,124 @@
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+## Summary
+
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. 
+
+Exploratory analysis of the data indicated that there is a number of variables with missing values and a number of variable with low variance. all of these variables were excluded from predictive model.
+
+Data set was split into training and cross-validation parts as 60-40%.
+
+Two models were trained - classification tree and random forest. Based on comparison of out of sample error estimates random forest model was selected as providing better results. That model was used for the second part of the assignment to predict 20 different test cases.
+
+## Analysis details
+
+```{r}
+# Load libraries
+library(caret)
+library(randomForest)
+```
+
+### Read the data
+```{r}
+d <- read.csv('pml-training.csv')
+testing <- read.csv('pml-testing.csv')
+```
+
+### exploratory analysis and data cleaning
+```{r}
+colnames(d)
+dim(d)
+head(d)
+sum(complete.cases(d))
+```
+
+We see that there's only a small number of rows that have all variables available.
+Let's see what % of NAs columns have.
+
+```{r}
+apply(d, 2, function(col)sum(is.na(col))/length(col))
+```
+
+We can either impute them or prune them. We see that if column contains NAs, then 98% of the values are NAs.
+In this case we made a decision to prune the columns with a large number of NAs.
+
+```{r}
+naVars <- apply(d, 2, function(col)sum(is.na(col))/length(col)) > 0.95
+d <- d[,names(naVars[naVars == F])]
+```
+
+There are also columns that identify the user and have a timestamp - we exclude these from the model building, as 
+we are looking to pridict the result based on accelerometer data, not the time when measurements occured or user who
+executed the exercise.
+
+```{r}
+d <- d[,!(names(d) %in% c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window"))]
+```
+
+Looking at the number of variables it is pretty big - 84. Let's remove columns with low variance:
+
+```{r}
+zeroVarCols <- nearZeroVar(d)
+d <- d[,-zeroVarCols]
+```
+
+Split into training and test sets for cross-validation
+
+```{r}
+inTrain <- createDataPartition(d$classe, p=0.6, list=FALSE)
+training <- d[inTrain, ]
+cv <- d[-inTrain,]
+```
+
+Train classification tree
+```{r}
+set.seed(12345)
+rpartFit <- train(classe ~ ., method="rpart", data=training)
+```
+
+Do a sanity check of the model - is it capable of producing all result levels A-E
+```{r}
+print(rpartFit$finalModel)
+```
+
+Estimate out of sample error using cross validation set
+```{r}
+cm <- confusionMatrix(cv$classe, predict(rpartFit, cv))
+cm
+```
+
+This model is not performing great with `r cm$overall["Accuracy"]*100`% accuracy.
+
+Train random forest and compare its performance to classification tree
+```{r}
+rfFit <- randomForest(classe ~ ., data=training)
+cm <- confusionMatrix(cv$classe, predict(rfFit, cv))
+cm
+```
+
+Random forest gives a much better model with `r cm$overall["Accuracy"]*100`% accuracy.
+
+Remove variables from testing set that we didn't use for training
+```{r}
+testing <- testing[,colnames(d)[-length(colnames(d))]]
+```
+
+Now let's predict data for the testing set
+```{r}
+answers <- predict(rfFit, testing)
+```
+
+And save data into files for submission
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
+
